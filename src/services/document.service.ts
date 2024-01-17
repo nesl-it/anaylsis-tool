@@ -1,34 +1,79 @@
-import { HttpStatusCode } from "../errors/types/HttpStatusCode";
 import { NextFunction, Request, Response } from "express";
 import { loadQAStuffChain } from "langchain/chains";
-import { CSVSchema } from "../models/document.model";
+import { CSVSchema, PDFSchema } from "../models/document.model";
 import { Document as DefaultDocument } from "mongodb";
-import { AppError } from "../errors/error.base";
 import { OpenAI } from "langchain/llms/openai";
+import { Document } from "langchain/document";
 import { MONGODB_URI } from "../config/secrets";
 import { MongoClient } from "mongodb";
 import { ChainValues } from "langchain/dist/schema";
 import { QueryDocumentI } from "./response/document.response";
-import * as YouTubeUtils from "../utils/youtubeTranscriptions";
 import * as LangChain from "../config/langchain";
-import { Chat } from "../models/chat.model";
+import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 
 export const processAnswerUsingOpenAI = async (
   queryResponse: DefaultDocument[],
-  question: string
+  question: string,
+  currentDate: string
 ): Promise<ChainValues> => {
-  const llm = new OpenAI({});
+  const llm = new OpenAI({ maxTokens: -1, modelName: "gpt-4-1106-preview" });
   const chain = loadQAStuffChain(llm);
+  const docs = queryResponse.map((element) => {
+    return new Document({ pageContent: JSON.stringify(element) });
+  });
+
+  console.log({ docs: docs.length, queryResponse: queryResponse.length });
+
+  const jsonResponse = {
+    "Project Update": {
+      "Project name (should have name of that project)": {
+        "Last Meeting Date": "Date when last meeting was held",
+        "Budget Update": "Current budget update of that project",
+        "Total Invoiced": "current totalInvoiced amount of that project",
+        Tasks: [
+          {
+            TaskID: "this will have the task ID",
+            Description: "this attribute should show the description of task",
+            Status: "this attribute should have the status of task",
+            Importance: "this attribute should have the importance of task",
+            Progress: "this attribute should have the progress of task",
+            Owner: "this attribute should have the owner or owners of tasks",
+            Date: "this attribute should have the start and due dates of tasks",
+          },
+        ],
+      },
+    },
+  };
 
   // Execute the chain with input documents and question
   const result = await chain.call({
-    input_documents: [new CSVSchema({ ownerId: queryResponse })],
-    question: question,
+    input_documents: docs,
+    question: `Extract the project summary from provided context (documents) in a structured, JSON-like format as in example of format to follow exactly: ${JSON.stringify(
+      jsonResponse
+    )},I gave you ${docs.length} tasks so make sure reponse has complete JSON all those ${
+      docs.length
+    } tasks and make sure it can be parsed by JSON.parse(). The question is: ${question}`,
   });
-
+  console.log({ result });
   return result;
-};
 
+  // let results = "";
+  // for (let i = 0; i < docs.length; i += 5) {
+  //   console.log("first", i, "---", i + 5);
+  //   const result = await chain.call({
+  //     input_documents: docs.slice(i, i + 5),
+  //     question: `Extract the project update details from provided context (documents) in a structured, JSON-like format as in example of format to follow: ${JSON.stringify(
+  //       jsonResponse
+  //     )} Make sure reponse has complete JSON not half or something that can't be parsed by JSON.parse(). The question is: ${question}`,
+  //   });
+  //   console.log({ result });
+  //   let tasks = JSON.parse(result.text)["Project Update"];
+  //   let inside = tasks["Tasks"];
+  //   console.log(inside + "===");
+  // }
+  // console.log({ results });
+  // return { results };
+};
 export const queryDocumentService = async (
   req: Request,
   res: Response,
@@ -46,7 +91,17 @@ export const queryDocumentService = async (
     const db = client.db("AnalysisTool");
     const collection = db.collection("csvschema");
 
-    // Query for similar documents.
+    const fieldsToExclude = {
+      createdAt: 0,
+      _id: 0,
+      updatedAt: 0,
+      embeddings: 0,
+      __v: 0,
+      ownerId: 0,
+      tasksIssuesPlannedNextWeek: 0,
+    };
+
+    // Query for similar documents
     const queryResponse = await collection
       .aggregate([
         {
@@ -54,20 +109,18 @@ export const queryDocumentService = async (
             queryVector: embeddings,
             path: "embeddings",
             numCandidates: 100,
-            limit: 5,
+            limit: 100,
             index: "default",
           },
         },
-        // {
-        //   $match: {
-        //     creatorId: creatorId,
-        //   },
-        // },
+        {
+          $project: fieldsToExclude,
+        },
       ])
       .toArray();
-
+    const currentDate = req.body.dateRange;
     if (queryResponse.length) {
-      const result = await processAnswerUsingOpenAI(queryResponse, queryText);
+      const result = await processAnswerUsingOpenAI(queryResponse, queryText, currentDate);
       return result;
     } else {
       return {
@@ -77,4 +130,104 @@ export const queryDocumentService = async (
   } finally {
     await client.close();
   }
+};
+
+export const processCSVResults = async (results, ownerId) => {
+  try {
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result["Task"]) {
+        const data = {
+          category: results.find((res) => res["Category"])?.Category,
+          project: results.find((res) => res["Project"])?.Project,
+          totalInvoiced: findValueByKey(results, "Total Invoiced"),
+          totalUninvoiced: findValueByKey(results, "Total Uninvoiced"),
+          reportPeriod: results.find((res) => res["Report Period"])?.["Report Period"],
+          budgetUpdate: results.find((res) => res["Budget Update"])?.["Budget Update"],
+          issuesWorkedOnThisWeek: results.find((res) => res["Issues Worked On This Week"])?.[
+            "Issues Worked On This Week"
+          ],
+          tasksIssuesPlannedNextWeek: JSON.stringify(
+            results.find((res) =>
+              Object.keys(res).some((prop) => prop.includes("Tasks/Issues Planned Next Week")) ? res : ""
+            )
+          ).replace(/({|})/g, ""),
+          task: result["Task"],
+          description: results[i + 1]?.Description,
+          status: results[i + 2]?.Status,
+          dates: results[i + 3]?.Dates,
+          owner: results[i + 4]?.Owner,
+          workLogged: (results[i + 5] && JSON.stringify(results[i + 5])).replace(/({|})/g, ""),
+        };
+
+        // Save data to the database
+        const existingDocument = await CSVSchema.findOne({ ownerId, task: data.task });
+        if (!existingDocument) {
+          let embeddings = await LangChain.generateTextEmbeddings(JSON.stringify(data));
+          const newDocResult = new CSVSchema({
+            ...data,
+            ownerId: ownerId,
+            embeddings: embeddings,
+          });
+          await newDocResult.save();
+        } else {
+          existingDocument.description = data.description;
+          existingDocument.status = data.status;
+          existingDocument.dates = data.dates;
+          existingDocument.owner = data.owner;
+          existingDocument.workLogged = data.workLogged;
+          existingDocument.budgetUpdate = data.budgetUpdate;
+          existingDocument.project = data.project;
+          existingDocument.totalInvoiced = data.totalInvoiced;
+          existingDocument.totalUninvoiced = data.totalUninvoiced;
+          existingDocument.reportPeriod = data.reportPeriod;
+          existingDocument.budgetUpdate = data.budgetUpdate;
+          existingDocument.issuesWorkedOnThisWeek = data.issuesWorkedOnThisWeek;
+          existingDocument.tasksIssuesPlannedNextWeek = data.tasksIssuesPlannedNextWeek;
+          await existingDocument.save();
+        }
+      }
+    }
+    return "Success";
+  } catch (error) {
+    return "Error";
+  }
+};
+
+// Helper function to find the value by a specific keyword
+function findValueByKey(results, keyword) {
+  const foundResult = JSON.stringify(
+    results.find((res) => Object.keys(res).some((key) => key.includes(keyword)))
+  );
+  const result = foundResult.replace(/({|})/g, "");
+  return result;
+}
+
+export const processPDFResults = async (data: string, ownerId: string, projectId: string) => {
+  const llm = new OpenAI({ maxTokens: -1 });
+  const chain = loadQAStuffChain(llm);
+  const paragraphCount = Math.ceil(data.split(" ").length / 200);
+  const { text } = await chain.call({
+    input_documents: [new Document({ pageContent: data })],
+    question: `From the given document above i want you to generate me  ${paragraphCount} meaningful paragraphs (string) each containing a complete and meaningful portion of the original text. Ensure that the generated text retains coherence and context. Please provide the processed output.`,
+  });
+  const result = text.split("\n\n").filter((item: string) => item.length > 2);
+  result.map(async (item: string) => {
+    let embeddings = await LangChain.generateTextEmbeddings(
+      JSON.stringify({
+        item,
+        projectID: projectId,
+      })
+    );
+    const pdfDocResult = new PDFSchema({
+      ownerId: ownerId,
+      embeddings: embeddings,
+      text: item,
+      project: projectId,
+    });
+    await pdfDocResult.save();
+  });
+
+  console.log({ result });
+  return result;
 };

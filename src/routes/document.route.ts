@@ -7,6 +7,8 @@ const router: Router = express.Router();
 
 // Document Routes
 router.post("/uploadDoc", uploadFileUsingMulter.single("file"), DocsController.uploadDocument);
-router.post("/query", ProtectedRoute, DocsController.queryDocument);
+router.get("/getSummary", DocsController.getSummary);
+
+router.post("/query", DocsController.queryDocument);
 
 export default router;
