@@ -2,7 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { loadQAStuffChain } from "langchain/chains";
 import { CSVSchema, PDFSchema } from "../models/document.model";
 import { Document as DefaultDocument } from "mongodb";
-import { OpenAI } from "langchain/llms/openai";
+import { OpenAI, OpenAIChat } from "langchain/llms/openai";
 import { Document } from "langchain/document";
 import { MONGODB_URI } from "../config/secrets";
 import { MongoClient } from "mongodb";
@@ -12,67 +12,84 @@ import * as LangChain from "../config/langchain";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 
 export const processAnswerUsingOpenAI = async (
-  queryResponse: DefaultDocument[],
-  question: string,
-  currentDate: string
+  csvQueryResponse: DefaultDocument[],
+  pdfQueryResponse: DefaultDocument[],
+  question: string
 ): Promise<ChainValues> => {
-  const llm = new OpenAI({ maxTokens: -1, modelName: "gpt-4-1106-preview" });
+  // const llm = new OpenAI({ maxTokens: -1, modelName: "gpt-4-1106-preview" });
+  const llm = new OpenAIChat({
+    maxTokens: -1,
+    modelName: "gpt-4-1106-preview",
+    temperature: 0,
+    prefixMessages: [
+      {
+        role: "system",
+        content: "You are a helpful assistant.",
+      },
+    ],
+  });
   const chain = loadQAStuffChain(llm);
-  const docs = queryResponse.map((element) => {
+
+  const pdfDocs = csvQueryResponse.map((element) => {
     return new Document({ pageContent: JSON.stringify(element) });
   });
-
-  console.log({ docs: docs.length, queryResponse: queryResponse.length });
-
+  const csvDocs = pdfQueryResponse.map((element) => {
+    return new Document({ pageContent: JSON.stringify(element) });
+  });
+  const docs = csvDocs.concat(pdfDocs);
+  console.log({ csvQueryResponse: csvDocs.length, pdfQueryResponse: pdfDocs.length });
   const jsonResponse = {
-    "Project Update": {
-      "Project name (should have name of that project)": {
-        "Last Meeting Date": "Date when last meeting was held",
-        "Budget Update": "Current budget update of that project",
-        "Total Invoiced": "current totalInvoiced amount of that project",
-        Tasks: [
-          {
-            TaskID: "this will have the task ID",
-            Description: "this attribute should show the description of task",
-            Status: "this attribute should have the status of task",
-            Importance: "this attribute should have the importance of task",
-            Progress: "this attribute should have the progress of task",
-            Owner: "this attribute should have the owner or owners of tasks",
-            Date: "this attribute should have the start and due dates of tasks",
-          },
-        ],
-      },
+    projectUpdate: {
+      project_details: [
+        {
+          projectName: "should have name of that project",
+          lastMeetingDate: "Date when last meeting was held",
+          budgetUpdate: "Current budget update of that project",
+          totalInvoiced: "current totalInvoiced amount of that project",
+          Tasks: [
+            {
+              TaskID: "this will have the task ID",
+              Description: "this attribute should show the description of task",
+              Status: "this attribute should have the status of task",
+              Importance: "this attribute should have the importance of task",
+              Progress: "this attribute should have the progress of task",
+              Owner: "this attribute should have the owner or owners of tasks",
+              Date: "this attribute should have the start and due dates of tasks",
+            },
+          ],
+        },
+      ],
+      projectSummary: `Overall summary of Projects in paragraph format from these documents ${pdfDocs}`,
     },
   };
+
+  const prompt = `Extract structured project summary information from the provided documents in a format similar to the example below. Ensure that the response is a valid JSON object and includes details for all the tasks in the given documents.
+Example Format:
+${JSON.stringify(jsonResponse)}
+I provided you with ${
+    docs.length
+  } tasks, so make sure the response has a complete JSON representation of all those ${
+    docs.length
+  } tasks. The response should be structured and easily parsed using JSON.parse(). The question is: ${question}`;
 
   // Execute the chain with input documents and question
   const result = await chain.call({
     input_documents: docs,
-    question: `Extract the project summary from provided context (documents) in a structured, JSON-like format as in example of format to follow exactly: ${JSON.stringify(
-      jsonResponse
-    )},I gave you ${docs.length} tasks so make sure reponse has complete JSON all those ${
-      docs.length
-    } tasks and make sure it can be parsed by JSON.parse(). The question is: ${question}`,
+    question: prompt,
   });
-  console.log({ result });
-  return result;
 
-  // let results = "";
-  // for (let i = 0; i < docs.length; i += 5) {
-  //   console.log("first", i, "---", i + 5);
-  //   const result = await chain.call({
-  //     input_documents: docs.slice(i, i + 5),
-  //     question: `Extract the project update details from provided context (documents) in a structured, JSON-like format as in example of format to follow: ${JSON.stringify(
-  //       jsonResponse
-  //     )} Make sure reponse has complete JSON not half or something that can't be parsed by JSON.parse(). The question is: ${question}`,
-  //   });
-  //   console.log({ result });
-  //   let tasks = JSON.parse(result.text)["Project Update"];
-  //   let inside = tasks["Tasks"];
-  //   console.log(inside + "===");
-  // }
-  // console.log({ results });
-  // return { results };
+  const match = result.text.match(/```json\n([\s\S]+)\n```/);
+  if (match && match[1]) {
+    try {
+      return JSON.parse(match[1]);
+    } catch (error) {
+      console.error("Error parsing JSON:", error);
+      return { error: error };
+    }
+  } else {
+    console.error("JSON not found in the provided string.");
+    return { error: "JSON not found in the provided string." };
+  }
 };
 export const queryDocumentService = async (
   req: Request,
@@ -89,7 +106,8 @@ export const queryDocumentService = async (
     await client.connect();
 
     const db = client.db("AnalysisTool");
-    const collection = db.collection("csvschema");
+    const csvCollection = db.collection("csvschema");
+    const pdfCollection = db.collection("pdfschema");
 
     const fieldsToExclude = {
       createdAt: 0,
@@ -102,7 +120,7 @@ export const queryDocumentService = async (
     };
 
     // Query for similar documents
-    const queryResponse = await collection
+    const csvQueryResponse = await csvCollection
       .aggregate([
         {
           $vectorSearch: {
@@ -118,9 +136,22 @@ export const queryDocumentService = async (
         },
       ])
       .toArray();
-    const currentDate = req.body.dateRange;
-    if (queryResponse.length) {
-      const result = await processAnswerUsingOpenAI(queryResponse, queryText, currentDate);
+    const pdfQueryResponse = await pdfCollection
+      .aggregate([
+        {
+          $vectorSearch: {
+            queryVector: embeddings,
+            path: "embeddings",
+            numCandidates: 100,
+            limit: 100,
+            index: "default",
+          },
+        },
+      ])
+      .toArray();
+    // console.log({ queryResponse });
+    if (pdfQueryResponse.length > 0 || csvQueryResponse.length > 0) {
+      const result = await processAnswerUsingOpenAI(pdfQueryResponse, csvQueryResponse, queryText);
       return result;
     } else {
       return {

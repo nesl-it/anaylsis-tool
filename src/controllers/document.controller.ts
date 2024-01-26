@@ -66,6 +66,7 @@ export const queryDocument = catchAsync(async (req: Request, res: Response, next
   await check("queryText", "Query text is required").isString().run(req);
 
   apiValidation(req, res);
+  // const result = await queryDocumentService(req, res, next);
   const result = await queryDocumentService(req, res, next);
   apiOk(res, result);
 });
