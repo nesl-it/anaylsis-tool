@@ -9,7 +9,6 @@ import { MongoClient } from "mongodb";
 import { ChainValues } from "langchain/dist/schema";
 import { QueryDocumentI } from "./response/document.response";
 import * as LangChain from "../config/langchain";
-import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 
 export const processAnswerUsingOpenAI = async (
   csvQueryResponse: DefaultDocument[],
@@ -37,7 +36,7 @@ export const processAnswerUsingOpenAI = async (
     return new Document({ pageContent: JSON.stringify(element) });
   });
   const docs = csvDocs.concat(pdfDocs);
-  console.log({ csvQueryResponse: csvDocs.length, pdfQueryResponse: pdfDocs.length });
+  // console.log({ csvQueryResponse: csvDocs.length, pdfQueryResponse: pdfDocs.length });
   const jsonResponse = {
     projectUpdate: {
       project_details: [
@@ -51,7 +50,8 @@ export const processAnswerUsingOpenAI = async (
               TaskID: "this will have the task ID",
               Description: "this attribute should show the description of task",
               Status: "this attribute should have the status of task",
-              Importance: "this attribute should have the importance of task",
+              Importance:
+                "this attribute should have the importance of task (create on your own by looking at the task details)",
               Progress: "this attribute should have the progress of task",
               Owner: "this attribute should have the owner or owners of tasks",
               Date: "this attribute should have the start and due dates of tasks",

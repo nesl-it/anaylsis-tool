@@ -6,9 +6,12 @@ import { uploadFileUsingMulter } from "../config/multer";
 const router: Router = express.Router();
 
 // Document Routes
-router.post("/uploadDoc", uploadFileUsingMulter.single("file"), DocsController.uploadDocument);
-router.get("/getSummary", DocsController.getSummary);
-
-router.post("/query", DocsController.queryDocument);
+router.post(
+  "/uploadDoc",
+  uploadFileUsingMulter.single("file"),
+  ProtectedRoute,
+  DocsController.uploadDocument
+);
+router.post("/query", ProtectedRoute, DocsController.queryDocument);
 
 export default router;

@@ -1,5 +1,4 @@
 import user from "./user.route";
-import document from './document.route'
-import chat from './chat.route';
+import document from "./document.route";
 
-export { user, document, chat };
+export { user, document };

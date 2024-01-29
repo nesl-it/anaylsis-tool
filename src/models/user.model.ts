@@ -9,9 +9,6 @@ export type UserI = Document & {
   lastname: string;
   email: string;
   password: string;
-  isEmailVerified: boolean;
-  authCode: string;
-
   comparePassword: (password: string) => { isMatch: boolean };
 };
 
@@ -22,14 +19,12 @@ const userSchema = new Schema<UserI>(
     lastname: String,
     email: { type: String, unique: true, required: true, lowercase: true },
     password: String,
-    isEmailVerified: { type: Boolean, default: false },
-    authCode: { type: String, default: null },
   },
   { timestamps: true, versionKey: false }
 );
 
 userSchema.plugin(toJSON);
-userSchema.plugin(paginate)
+userSchema.plugin(paginate);
 
 /**
  * Password hashing middleware.

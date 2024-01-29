@@ -50,7 +50,6 @@ app.use(express.urlencoded({ extended: true }));
 // Routes Listings
 app.use("/v1/user/auth", AppRoutes.user);
 app.use("/v1/document", AppRoutes.document);
-app.use("/v1/chat", AppRoutes.chat);
 
 app.use("/", (req, res) => {
   res.json({
