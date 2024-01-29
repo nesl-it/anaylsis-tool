@@ -9,6 +9,12 @@ import { MongoClient } from "mongodb";
 import { ChainValues } from "langchain/dist/schema";
 import { QueryDocumentI } from "./response/document.response";
 import * as LangChain from "../config/langchain";
+import { HttpStatusCode } from "../errors/types/HttpStatusCode";
+import { AppError } from "../errors/error.base";
+import path from "path";
+import fs from "fs";
+import csvParser from "csv-parser";
+import { PDFLoader } from "langchain/document_loaders/fs/pdf";
 
 export const processAnswerUsingOpenAI = async (
   csvQueryResponse: DefaultDocument[],
@@ -123,6 +129,11 @@ export const queryDocumentService = async (
     const csvQueryResponse = await csvCollection
       .aggregate([
         {
+          $match: {
+            _id: req.user.id,
+          },
+        },
+        {
           $vectorSearch: {
             queryVector: embeddings,
             path: "embeddings",
@@ -139,6 +150,11 @@ export const queryDocumentService = async (
     const pdfQueryResponse = await pdfCollection
       .aggregate([
         {
+          $match: {
+            _id: req.user.id,
+          },
+        },
+        {
           $vectorSearch: {
             queryVector: embeddings,
             path: "embeddings",
@@ -149,7 +165,6 @@ export const queryDocumentService = async (
         },
       ])
       .toArray();
-    // console.log({ queryResponse });
     if (pdfQueryResponse.length > 0 || csvQueryResponse.length > 0) {
       const result = await processAnswerUsingOpenAI(pdfQueryResponse, csvQueryResponse, queryText);
       return result;
@@ -258,7 +273,50 @@ export const processPDFResults = async (data: string, ownerId: string, projectId
     });
     await pdfDocResult.save();
   });
-
-  console.log({ result });
   return result;
+};
+
+export const uploadDocService = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<{ response: string }> => {
+  const ownerId = req.user.id;
+  const results: any[] = [];
+  if (!req.file || !req.body.projectId) {
+    throw new AppError(HttpStatusCode.BadRequest, "Either project file or project id is missing");
+  }
+
+  const fileExtension = path.extname(req.file.originalname);
+
+  if (![".csv", ".pdf"].includes(fileExtension)) {
+    console.log({ fileExtension });
+    throw new AppError(HttpStatusCode.BadRequest, "Invalid file type");
+  }
+
+  if (fileExtension === ".csv") {
+    fs.createReadStream(req.file.path)
+      .pipe(csvParser({ headers: false }))
+      .on("data", (data: any) => {
+        const transformedData: Record<string, string> = {};
+        Object.keys(data).forEach((key) => {
+          transformedData[data["0"]] = data["1"];
+        });
+        results.push(transformedData);
+      })
+      .on("end", async () => {
+        processCSVResults(results, ownerId);
+        fs.unlinkSync(req.file.path);
+      });
+  }
+  if (fileExtension === ".pdf") {
+    const projectId = req.body.projectId ?? "";
+
+    const loader = new PDFLoader(req.file.path, {
+      splitPages: false,
+    });
+    const docs = await loader.load();
+    await processPDFResults(docs[0].pageContent, ownerId, projectId);
+  }
+  return { response: "Upload Success" };
 };
