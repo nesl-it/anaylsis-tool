@@ -48,9 +48,11 @@ export const processAnswerUsingOpenAI = async (
       project_details: [
         {
           projectName: "should have name of that project",
-          lastMeetingDate: "Date when last meeting was held",
-          budgetUpdate: "Current budget update of that project",
-          totalInvoiced: "current totalInvoiced amount of that project",
+          lastMeetingDate:
+            "Date when last meeting was held (if not available then set it to 'No Meeting Yet')",
+          budgetUpdate: "Current budget update of that project (if not available then set it to 'No Update')",
+          totalInvoiced:
+            "current totalInvoiced amount of that project (if not available then set it to 'No New Invoice')",
           Tasks: [
             {
               TaskID: "this will have the task ID",
@@ -65,7 +67,7 @@ export const processAnswerUsingOpenAI = async (
           ],
         },
       ],
-      projectSummary: `Overall summary of Projects in paragraph format from these documents ${pdfDocs}`,
+      projectSummary: `this attribute should have overall summary of Projects in paragraph format from these documents: ${pdfDocs}`,
     },
   };
 
@@ -138,12 +140,12 @@ export const queryDocumentService = async (
           },
         },
         {
-          $project: fieldsToExclude,
-        },
-        {
           $match: {
             ownerId: req.user.id,
           },
+        },
+        {
+          $project: fieldsToExclude,
         },
       ])
       .toArray();
@@ -165,6 +167,7 @@ export const queryDocumentService = async (
         },
       ])
       .toArray();
+    console.log({ pdfQueryResponse: pdfQueryResponse.length, csvQueryResponse: csvQueryResponse.length });
     if (pdfQueryResponse.length > 0 || csvQueryResponse.length > 0) {
       const result = await processAnswerUsingOpenAI(pdfQueryResponse, csvQueryResponse, queryText);
       return result;
@@ -283,6 +286,7 @@ export const uploadDocService = async (
 ): Promise<{ response: string }> => {
   const ownerId = req.user.id;
   const results: any[] = [];
+  console.log({ heyy: req });
   if (!req.file || !req.body.projectId) {
     throw new AppError(HttpStatusCode.BadRequest, "Either project file or project id is missing");
   }
