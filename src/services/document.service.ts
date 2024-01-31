@@ -129,11 +129,6 @@ export const queryDocumentService = async (
     const csvQueryResponse = await csvCollection
       .aggregate([
         {
-          $match: {
-            _id: req.user.id,
-          },
-        },
-        {
           $vectorSearch: {
             queryVector: embeddings,
             path: "embeddings",
@@ -145,15 +140,15 @@ export const queryDocumentService = async (
         {
           $project: fieldsToExclude,
         },
+        {
+          $match: {
+            ownerId: req.user.id,
+          },
+        },
       ])
       .toArray();
     const pdfQueryResponse = await pdfCollection
       .aggregate([
-        {
-          $match: {
-            _id: req.user.id,
-          },
-        },
         {
           $vectorSearch: {
             queryVector: embeddings,
@@ -161,6 +156,11 @@ export const queryDocumentService = async (
             numCandidates: 100,
             limit: 100,
             index: "default",
+          },
+        },
+        {
+          $match: {
+            ownerId: req.user.id,
           },
         },
       ])
