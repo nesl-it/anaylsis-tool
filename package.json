@@ -6,7 +6,7 @@
   "scripts": {
     "build-ts": "tsc",
     "build": "rm -rf dist && npm run build-ts ",
-    "build2": "rm -rf dist && npm run build-ts && npm run serve",
+    "build2": "npm install && rm -rf dist && npm run build-ts",
     "debug": "npm run build && npm run watch-debug",
     "serve-debug": "nodemon --inspect dist/server.js",
     "serve": "node dist/server.js",
