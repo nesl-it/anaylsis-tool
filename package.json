@@ -5,7 +5,8 @@
   "main": "app.js",
   "scripts": {
     "build-ts": "tsc",
-    "build": "rm -rf dist && npm run build-ts",
+    "build": "rm -rf dist && npm run build-ts ",
+    "build2": "rm -rf dist && npm run build-ts && npm run serve",
     "debug": "npm run build && npm run watch-debug",
     "serve-debug": "nodemon --inspect dist/server.js",
     "serve": "node dist/server.js",
