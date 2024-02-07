@@ -13,5 +13,6 @@ router.post(
   DocsController.uploadDocument
 );
 router.post("/query", ProtectedRoute, DocsController.queryDocument);
+router.get("/listProjects", ProtectedRoute, DocsController.listProjects);
 
 export default router;

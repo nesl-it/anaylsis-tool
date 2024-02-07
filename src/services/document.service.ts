@@ -14,7 +14,9 @@ import { AppError } from "../errors/error.base";
 import path from "path";
 import fs from "fs";
 import csvParser from "csv-parser";
+import openai from 'openai'
 import { PDFLoader } from "langchain/document_loaders/fs/pdf";
+import { User } from "../models/user.model";
 
 export const processAnswerUsingOpenAI = async (
   csvQueryResponse: DefaultDocument[],
@@ -33,6 +35,8 @@ export const processAnswerUsingOpenAI = async (
       },
     ],
   });
+
+  
   const chain = loadQAStuffChain(llm);
 
   const pdfDocs = csvQueryResponse.map((element) => {
@@ -67,18 +71,19 @@ export const processAnswerUsingOpenAI = async (
           ],
         },
       ],
-      projectSummary: `this attribute should have overall summary of Projects in paragraph format from these documents: ${pdfDocs}`,
+      projectSummary: `generate an overall summary in paragraph format from these documents: ${pdfDocs}`,
     },
   };
 
-  const prompt = `Extract structured project summary information from the provided documents in a format similar to the example below. Ensure that the response is a valid JSON object and includes details for all the tasks in the given documents.
+  const prompt = `Extract structured project report from the provided documents in a format similar to the example below. Ensure that the response is a valid JSON object (IN CASE OF MULTIPLE PROJECTS(project) IT should be able to tackle that too) and includes details for all the tasks in the given documents.
 Example Format:
 ${JSON.stringify(jsonResponse)}
 I provided you with ${
     docs.length
   } tasks, so make sure the response has a complete JSON representation of all those ${
     docs.length
-  } tasks. The response should be structured and easily parsed using JSON.parse(). The question is: ${question}`;
+  } tasks. 
+  The response should be structured and easily parsed using JSON.parse(). The question is: ${question}`;
 
   // Execute the chain with input documents and question
   const result = await chain.call({
@@ -104,7 +109,7 @@ export const queryDocumentService = async (
   res: Response,
   next: NextFunction
 ): Promise<QueryDocumentI> => {
-  let { queryText } = req.body;
+  let { queryText,projectIds } = req.body;
 
   let embeddings = await LangChain.generateTextEmbeddings(queryText);
 
@@ -116,7 +121,6 @@ export const queryDocumentService = async (
     const db = client.db("AnalysisTool");
     const csvCollection = db.collection("csvschema");
     const pdfCollection = db.collection("pdfschema");
-
     const fieldsToExclude = {
       createdAt: 0,
       _id: 0,
@@ -142,6 +146,7 @@ export const queryDocumentService = async (
         {
           $match: {
             ownerId: req.user.id,
+            project: { $in: projectIds }
           },
         },
         {
@@ -163,6 +168,7 @@ export const queryDocumentService = async (
         {
           $match: {
             ownerId: req.user.id,
+            project: { $in: projectIds }
           },
         },
       ])
@@ -323,4 +329,41 @@ export const uploadDocService = async (
     await processPDFResults(docs[0].pageContent, ownerId, projectId);
   }
   return { response: "Upload Success" };
+};
+
+
+
+export const listProjectService = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<{ projects: string[] }> => {
+  const ownerId = req.user.id;
+  if (!ownerId) {
+    throw new AppError(HttpStatusCode.BadRequest, "User doesn't exist with this email");
+  } else {
+    const client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    const db = client.db("AnalysisTool");
+    const csvCollection = db.collection("csvschema");
+    const pdfCollection = db.collection("pdfschema");
+  
+    try {
+      const pdfResults = await pdfCollection.aggregate([
+        { $match: { ownerId } }, 
+        { $group: { _id: null, projectIds: { $addToSet: "$project" } } } 
+      ]).toArray();
+      const csvResults = await csvCollection.aggregate([
+        { $match: { ownerId } }, 
+        { $group: { _id: null, projectIds: { $addToSet: "$project" } } } 
+      ]).toArray();
+      const allProjectIds: string[] = [...new Set([...pdfResults[0]?.projectIds || [], ...csvResults[0]?.projectIds || []])];
+      return { projects: allProjectIds };
+    } catch (error) {
+      console.error("Error fetching projectIds:", error);
+      throw new AppError(HttpStatusCode.InternalServerError, "Failed to fetch projectIds");
+    } finally {
+      await client.close();
+    }
+  }
 };
